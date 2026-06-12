@@ -10,60 +10,78 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CNN_MODEL_PATH = (
-    Path(__file__).resolve().parents[1] / "models" / "best_cnn.onnx"
-)
+_MODELS_DIR = Path(__file__).resolve().parents[1] / "models"
+DEFAULT_ONNX_PATH = _MODELS_DIR / "best_cnn.onnx"
+DEFAULT_KERAS_PATH = _MODELS_DIR / "best_cnn.keras"
 
 CNN_CLASSES = ["crack", "pothole"]
 CNN_INPUT_SIZE = int(os.getenv("CNN_INPUT_SIZE", "224"))
 
 
-def _configured_model_path() -> Path:
-    env_path = os.getenv("CNN_MODEL_PATH")
-    return Path(env_path).expanduser().resolve() if env_path else DEFAULT_CNN_MODEL_PATH
+def _configured_path(env_var: str, default: Path) -> Path:
+    val = os.getenv(env_var)
+    return Path(val).expanduser().resolve() if val else default
 
 
 class CNNClassifier:
-    """Runs the road-damage classifier using ONNX Runtime (~20 MB RAM vs ~600 MB for TensorFlow)."""
+    """
+    Loads the road-damage CNN.
+    Prefers the ONNX model (onnxruntime, ~20 MB RAM) when available.
+    Falls back to the Keras model (TensorFlow) for local development.
+    """
 
-    def __init__(self, model_path: Optional[Path] = None) -> None:
-        self.model_path = model_path or _configured_model_path()
-        self._session: Any = None
+    def __init__(self) -> None:
+        self._session: Any = None   # onnxruntime session
+        self._keras_model: Any = None
+        self._input_name: str = ""
 
     def load(self) -> None:
-        if self._session is not None:
+        if self._session is not None or self._keras_model is not None:
             return
 
-        try:
-            import onnxruntime as ort  # type: ignore
-        except ImportError:
-            logger.warning(
-                "onnxruntime is not installed. CNN classification will return 503."
-            )
-            return
+        onnx_path = _configured_path("CNN_MODEL_PATH", DEFAULT_ONNX_PATH)
+        keras_path = _configured_path("CNN_KERAS_PATH", DEFAULT_KERAS_PATH)
 
-        if not self.model_path.exists():
-            logger.warning(
-                "ONNX model not found at %s. "
-                "Run the build step (convert_model.py) to generate it.",
-                self.model_path,
-            )
-            return
+        # --- Try ONNX first (production / Render) ---
+        if onnx_path.exists():
+            try:
+                import onnxruntime as ort  # type: ignore
+                opts = ort.SessionOptions()
+                opts.inter_op_num_threads = 1
+                opts.intra_op_num_threads = 1
+                self._session = ort.InferenceSession(
+                    str(onnx_path),
+                    sess_options=opts,
+                    providers=["CPUExecutionProvider"],
+                )
+                self._input_name = self._session.get_inputs()[0].name
+                logger.info("CNN loaded via onnxruntime from %s", onnx_path)
+                return
+            except Exception as exc:
+                logger.warning("onnxruntime load failed (%s), trying Keras fallback.", exc)
 
-        opts = ort.SessionOptions()
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 1
-        self._session = ort.InferenceSession(
-            str(self.model_path),
-            sess_options=opts,
-            providers=["CPUExecutionProvider"],
+        # --- Fall back to Keras / TensorFlow (local dev) ---
+        if keras_path.exists():
+            try:
+                import tensorflow as tf  # type: ignore
+                self._keras_model = tf.keras.models.load_model(
+                    str(keras_path), compile=False
+                )
+                logger.info("CNN loaded via TensorFlow/Keras from %s", keras_path)
+                return
+            except Exception as exc:
+                logger.warning("Keras load failed: %s", exc)
+
+        logger.warning(
+            "CNN model not found. Tried ONNX at %s and Keras at %s. "
+            "For local dev place best_cnn.keras in backend/models/. "
+            "For production run convert_model.py to generate best_cnn.onnx.",
+            onnx_path, keras_path,
         )
-        self._input_name = self._session.get_inputs()[0].name
-        logger.info("CNN ONNX model loaded from %s", self.model_path)
 
     @property
     def available(self) -> bool:
-        return self._session is not None
+        return self._session is not None or self._keras_model is not None
 
     def classify(self, image_bgr: np.ndarray) -> dict:
         if not self.available:
@@ -73,9 +91,12 @@ class CNNClassifier:
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         batch = (rgb.astype("float32") / 255.0)[np.newaxis]
 
-        raw = self._session.run(None, {self._input_name: batch})[0][0]
+        if self._session is not None:
+            raw = self._session.run(None, {self._input_name: batch})[0][0]
+        else:
+            raw = self._keras_model.predict(batch, verbose=0)[0]
 
-        # Support both binary sigmoid (scalar) and softmax (2-class) outputs.
+        # Binary sigmoid output: single value → pothole probability
         if raw.shape == () or (raw.ndim == 1 and len(raw) == 1):
             p_pothole = float(raw.flat[0])
             probs = np.array([1.0 - p_pothole, p_pothole])

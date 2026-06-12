@@ -89,7 +89,8 @@ async def classify(
             status_code=503,
             detail=(
                 "CNN classifier is unavailable. "
-                "Ensure TensorFlow is installed and road_damage.keras is in backend/models/."
+                "Ensure onnxruntime is installed and best_cnn.onnx is in backend/models/. "
+                "Run: python convert_model.py to generate the ONNX model from best_cnn.keras."
             ),
         )
 
