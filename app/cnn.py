@@ -88,8 +88,13 @@ class CNNClassifier:
             raise RuntimeError("CNN model is not loaded.")
 
         resized = cv2.resize(image_bgr, (CNN_INPUT_SIZE, CNN_INPUT_SIZE))
-        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        batch = (rgb.astype("float32") / 255.0)[np.newaxis]
+        # ResNet50 backbone expects caffe-style preprocessing:
+        # subtract ImageNet BGR channel means, keep 0-255 scale (no /255).
+        x = resized.astype("float32")   # already BGR from OpenCV
+        x[..., 0] -= 103.939           # B mean
+        x[..., 1] -= 116.779           # G mean
+        x[..., 2] -= 123.68            # R mean
+        batch = x[np.newaxis]
 
         if self._session is not None:
             raw = self._session.run(None, {self._input_name: batch})[0][0]
