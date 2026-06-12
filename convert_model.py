@@ -1,5 +1,5 @@
 """
-Build-time script: converts road_damage.keras → road_damage.onnx
+Build-time script: converts best_cnn.keras → best_cnn.onnx
 Run once during Render build before installing the runtime requirements.
 """
 from __future__ import annotations
@@ -7,8 +7,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-KERAS_PATH = Path("models/road_damage.keras")
-ONNX_PATH = Path("models/road_damage.onnx")
+KERAS_PATH = Path("models/best_cnn.keras")
+ONNX_PATH = Path("models/best_cnn.onnx")
 INPUT_SIZE = 224
 
 

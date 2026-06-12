@@ -8,3 +8,4 @@ dist/
 build/
 .DS_Store
 models/*.onnx
+models/road_damage.keras

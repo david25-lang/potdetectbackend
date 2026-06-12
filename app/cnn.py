@@ -11,7 +11,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 DEFAULT_CNN_MODEL_PATH = (
-    Path(__file__).resolve().parents[1] / "models" / "road_damage.onnx"
+    Path(__file__).resolve().parents[1] / "models" / "best_cnn.onnx"
 )
 
 CNN_CLASSES = ["crack", "pothole"]
